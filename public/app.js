@@ -17,12 +17,25 @@ const COLORS = {
 const LIGHT_COLORS = new Set(['yellow', 'orange']);
 
 const STORAGE_KEY = 'web4webs:data';
+const PREFS_KEY = 'web4webs:prefs';
+
+const VIEW_MODES = [
+  { id: 'grid', label: 'Grid' },
+  { id: 'triple', label: 'Triple' },
+  { id: 'long', label: 'Long' },
+  { id: 'fullscreen', label: 'Fullscreen' },
+  { id: 'list', label: 'List' },
+  { id: 'mobile', label: 'Mobile' },
+  { id: 'images', label: 'Images' },
+];
 
 const state = {
   collections: [],
   bookmarks: [],
   view: 'all', // 'all' | 'unsorted' | collection id
   query: '',
+  viewMode: 'grid',
+  live: false,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -97,6 +110,20 @@ function saveStore() {
   }
 }
 
+function loadPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
+    if (VIEW_MODES.some((m) => m.id === p.viewMode)) state.viewMode = p.viewMode;
+    state.live = Boolean(p.live);
+  } catch { /* defaults */ }
+}
+
+function savePrefs() {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ viewMode: state.viewMode, live: state.live }));
+  } catch { /* ignore */ }
+}
+
 function uid() {
   return (crypto.randomUUID && crypto.randomUUID()) ||
     `id-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -155,6 +182,29 @@ function bookmarksIn(collectionId) {
   return sortByOrder(state.bookmarks.filter((b) => (b.collectionId || null) === (collectionId || null)));
 }
 
+// ---------- nested collections ----------
+
+function childCollections(parentId) {
+  return sortByOrder(state.collections.filter((c) => (c.parentId || null) === (parentId || null)));
+}
+
+// All descendant ids of a collection (excludes itself). Used to prevent cycles
+// when re-parenting and to reparent orphans on delete.
+function descendantIds(id) {
+  const out = [];
+  const walk = (pid) => {
+    for (const c of state.collections) {
+      if ((c.parentId || null) === pid) { out.push(c.id); walk(c.id); }
+    }
+  };
+  walk(id);
+  return out;
+}
+
+function collectionById(id) {
+  return state.collections.find((c) => c.id === id) || null;
+}
+
 function nextOrder(items) {
   return items.reduce((max, item) => Math.max(max, item.order || 0), 0) + 1;
 }
@@ -200,20 +250,25 @@ function renderSidebar() {
 
   const nav = $('#sidebar-collections');
   nav.replaceChildren();
-  for (const collection of sortByOrder(state.collections)) {
-    const item = el('button', {
-      class: `nav-item${state.view === collection.id ? ' active' : ''}`,
-      type: 'button',
-      dataset: { collectionId: collection.id },
-      onclick: () => setView(collection.id),
-    },
-      el('span', { class: 'nav-dot', style: { background: colorHex(collection.color) } }),
-      el('span', { class: 'nav-label' }, collection.name),
-      el('span', { class: 'nav-count' }, String(bookmarksIn(collection.id).length)),
-    );
-    attachSidebarDrop(item, collection.id);
-    nav.append(item);
-  }
+  const renderTree = (parentId, depth) => {
+    for (const collection of childCollections(parentId)) {
+      const item = el('button', {
+        class: `nav-item${state.view === collection.id ? ' active' : ''}`,
+        type: 'button',
+        dataset: { collectionId: collection.id },
+        style: { paddingLeft: `${12 + depth * 16}px` },
+        onclick: () => setView(collection.id),
+      },
+        el('span', { class: 'nav-dot', style: { background: colorHex(collection.color) } }),
+        el('span', { class: 'nav-label' }, collection.name),
+        el('span', { class: 'nav-count' }, String(bookmarksIn(collection.id).length)),
+      );
+      attachSidebarDrop(item, collection.id);
+      nav.append(item);
+      renderTree(collection.id, depth + 1);
+    }
+  };
+  renderTree(null, 0);
 
   document.querySelectorAll('.nav-item[data-view]').forEach((item) => {
     item.classList.toggle('active', item.dataset.view === state.view);
@@ -222,6 +277,7 @@ function renderSidebar() {
 
 function renderMain() {
   const main = $('#main');
+  main.className = `main view-${state.viewMode}`;
   main.replaceChildren();
 
   if (!state.bookmarks.length && !state.collections.length && !state.query) {
@@ -234,15 +290,25 @@ function renderMain() {
     return;
   }
 
-  const collections = sortByOrder(state.collections);
   const showAll = state.view === 'all';
 
+  // Flatten collections in tree order so nested collections render as indented
+  // sections under their parent.
+  const ordered = [];
+  const flatten = (parentId, depth) => {
+    for (const c of childCollections(parentId)) { ordered.push({ c, depth }); flatten(c.id, depth + 1); }
+  };
+  flatten(null, 0);
+
+  // When a collection is selected, show it plus its whole subtree.
+  const subtree = showAll ? null : new Set([state.view, ...descendantIds(state.view)]);
+
   if (showAll || state.view !== 'unsorted') {
-    for (const collection of collections) {
-      if (!showAll && state.view !== collection.id) continue;
-      const items = bookmarksIn(collection.id).filter(matchesQuery);
+    for (const { c, depth } of ordered) {
+      if (!showAll && !subtree.has(c.id)) continue;
+      const items = bookmarksIn(c.id).filter(matchesQuery);
       if (state.query && !items.length) continue;
-      main.append(sectionEl(collection, items));
+      main.append(sectionEl(c, items, depth));
     }
   }
 
@@ -258,7 +324,7 @@ function renderMain() {
   }
 }
 
-function sectionEl(collection, items) {
+function sectionEl(collection, items, depth = 0) {
   const isUnsorted = !collection;
   const color = isUnsorted ? COLORS.grey : colorHex(collection.color);
   const collectionId = isUnsorted ? null : collection.id;
@@ -279,10 +345,13 @@ function sectionEl(collection, items) {
       el('button', {
         class: 'icon-btn', type: 'button', title: 'Delete collection',
         onclick: async () => {
-          const ok = await confirmDialog(`Delete “${collection.name}”? Its bookmarks move to Unsorted.`);
+          const ok = await confirmDialog(`Delete “${collection.name}”? Its bookmarks move to Unsorted and sub-collections move up.`);
           if (!ok) return;
-          state.collections = state.collections.filter((c) => c.id !== collection.id);
+          // Reparent direct children up to this collection's parent, drop its
+          // bookmarks to Unsorted, then remove it.
+          for (const c of state.collections) if ((c.parentId || null) === collection.id) c.parentId = collection.parentId || null;
           for (const b of state.bookmarks) if (b.collectionId === collection.id) b.collectionId = null;
+          state.collections = state.collections.filter((c) => c.id !== collection.id);
           if (state.view === collection.id) state.view = 'all';
           saveStore();
           render();
@@ -303,7 +372,10 @@ function sectionEl(collection, items) {
     },
   }, svgIcon(ICONS.chevron));
 
-  const section = el('section', { class: `section${collection && collection.collapsed ? ' collapsed' : ''}` },
+  const section = el('section', {
+    class: `section${collection && collection.collapsed ? ' collapsed' : ''}${depth ? ' nested' : ''}`,
+    style: depth ? { marginLeft: `${depth * 22}px` } : {},
+  },
     el('div', { class: 'section-header' },
       el('span', { class: 'group-pill', style: { background: color, color: pillText } },
         el('span', { class: 'pill-name' }, isUnsorted ? 'Unsorted' : collection.name)),
@@ -320,16 +392,34 @@ function thumbEl(bookmark) {
   const thumb = el('div', { class: 'card-thumb' });
   const fallback = () => {
     const hue = hueOf(hostnameOf(bookmark.url));
-    thumb.replaceChildren(el('div', {
+    thumb.append(el('div', {
       class: 'thumb-fallback',
       style: { background: `linear-gradient(135deg, hsl(${hue} 60% 52%), hsl(${(hue + 45) % 360} 60% 40%))` },
     }, hostnameOf(bookmark.url).charAt(0).toUpperCase()));
   };
+  // Base layer: OG image or gradient. Stays visible behind a live frame, so a
+  // site that blocks framing (X-Frame-Options/CSP) shows the image instead.
   if (bookmark.image) {
-    const img = el('img', { src: bookmark.image, alt: '', loading: 'lazy', onerror: fallback });
-    thumb.append(img);
+    thumb.append(el('img', { src: bookmark.image, alt: '', loading: 'lazy', onerror: (e) => { e.target.remove(); if (!thumb.querySelector('.thumb-fallback')) fallback(); } }));
   } else {
     fallback();
+  }
+  // Live layer: a real screenshot of the page, rendered server-side by a free
+  // thumbnail service. Unlike an <iframe>, this works even for sites that block
+  // framing (X-Frame-Options / CSP frame-ancestors), i.e. most big sites.
+  // ponytail: mShots is free/no-key; first hit returns a "generating" placeholder
+  // then caches the real shot. Swap the service URL if you need faster/keyed shots.
+  if (state.live) {
+    thumb.classList.add('live');
+    const shot = el('img', {
+      class: 'live-shot',
+      src: `https://s.wordpress.com/mshots/v1/${encodeURIComponent(bookmark.url)}?w=1200&h=630`,
+      alt: '',
+      loading: 'lazy',
+      onerror: (e) => e.target.remove(), // fall back to OG image / gradient beneath
+    });
+    thumb.append(shot);
+    thumb.append(el('span', { class: 'live-badge' }, 'LIVE'));
   }
   return thumb;
 }
@@ -675,12 +765,36 @@ function renderSwatches() {
   }
 }
 
+function fillParentSelect(selectedId, editingId) {
+  const select = $('#col-parent');
+  if (!select) return;
+  // Exclude self and descendants to prevent cycles.
+  const banned = new Set(editingId ? [editingId, ...descendantIds(editingId)] : []);
+  select.replaceChildren(el('option', { value: '' }, 'Top level (no parent)'));
+  const add = (parentId, depth) => {
+    for (const c of childCollections(parentId)) {
+      if (!banned.has(c.id)) {
+        const option = el('option', { value: c.id }, `${'— '.repeat(depth)}${c.name}`);
+        if (c.id === selectedId) option.selected = true;
+        select.append(option);
+      }
+      add(c.id, depth + 1);
+    }
+  };
+  add(null, 0);
+}
+
 function openCollectionModal(collection = null) {
   editingCollectionId = collection ? collection.id : null;
   selectedColor = collection ? collection.color : 'blue';
   $('#collection-modal-title').textContent = collection ? 'Edit collection' : 'New collection';
   $('#col-save').textContent = collection ? 'Save changes' : 'Create';
   $('#col-name').value = collection ? collection.name : '';
+  // Default parent = currently viewed collection when creating from within it.
+  const defaultParent = collection
+    ? (collection.parentId || '')
+    : (state.view !== 'all' && state.view !== 'unsorted' ? state.view : '');
+  fillParentSelect(defaultParent || '', editingCollectionId);
   renderSwatches();
   collectionModal.showModal();
   $('#col-name').focus();
@@ -693,11 +807,15 @@ function initCollectionModal() {
     e.preventDefault();
     const name = $('#col-name').value.trim();
     if (!name) return;
+    const parentRaw = $('#col-parent') ? $('#col-parent').value || null : null;
     if (editingCollectionId) {
       const collection = state.collections.find((c) => c.id === editingCollectionId);
       if (collection) {
+        // Guard against selecting self/descendant as parent (would orphan a cycle).
+        const banned = new Set([editingCollectionId, ...descendantIds(editingCollectionId)]);
         collection.name = name.slice(0, 100);
         collection.color = selectedColor;
+        collection.parentId = parentRaw && !banned.has(parentRaw) ? parentRaw : null;
         toast('Collection updated');
       }
     } else {
@@ -706,7 +824,8 @@ function initCollectionModal() {
         name: name.slice(0, 100),
         color: selectedColor,
         collapsed: false,
-        order: nextOrder(state.collections),
+        parentId: parentRaw,
+        order: nextOrder(childCollections(parentRaw)),
         createdAt: new Date().toISOString(),
       });
       toast('Collection created');
@@ -757,6 +876,108 @@ function initChrome() {
   });
 }
 
+// ---------- view toolbar (view modes + live + import) ----------
+
+function initViewbar() {
+  const modes = $('#view-modes');
+  modes.replaceChildren();
+  for (const m of VIEW_MODES) {
+    modes.append(el('button', {
+      class: `mode-btn${state.viewMode === m.id ? ' active' : ''}`,
+      type: 'button',
+      dataset: { mode: m.id },
+      onclick: () => {
+        state.viewMode = m.id;
+        savePrefs();
+        modes.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === m.id));
+        renderMain();
+      },
+    }, m.label));
+  }
+
+  const live = $('#live-toggle');
+  live.checked = state.live;
+  live.addEventListener('change', () => {
+    state.live = live.checked;
+    savePrefs();
+    renderMain();
+  });
+
+  $('#import-btn').addEventListener('click', () => $('#import-file').click());
+  $('#import-file').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const added = importChromeBookmarks(text);
+      saveStore();
+      render();
+      toast(added ? `Imported ${added} bookmark${added === 1 ? '' : 's'}` : 'No bookmarks found in file', !added);
+    } catch {
+      toast('Could not read that file.', true);
+    }
+  });
+}
+
+// ---------- chrome bookmark import ----------
+// Chrome exports the Netscape bookmark format: nested <DL> lists where <H3> is a
+// folder and <A> is a link. We map folders to (nested) collections and links to
+// bookmarks, reusing folder colors round-robin so the tree stays readable.
+
+function importChromeBookmarks(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const root = doc.querySelector('dl');
+  if (!root) return 0;
+
+  const colorNames = Object.keys(COLORS).filter((c) => c !== 'grey');
+  let colorIdx = 0;
+  let added = 0;
+
+  // Walk a <DL>: its <DT> children each hold either an <H3> (folder + nested
+  // <DL>) or an <A> (link). parentId threads the current collection down.
+  const walk = (dl, parentId) => {
+    for (const dt of dl.children) {
+      if (dt.tagName !== 'DT') continue;
+      const h3 = dt.querySelector(':scope > h3');
+      const a = dt.querySelector(':scope > a');
+      if (h3) {
+        const collection = {
+          id: uid(),
+          name: (h3.textContent || 'Folder').slice(0, 100),
+          color: colorNames[colorIdx++ % colorNames.length],
+          collapsed: false,
+          parentId: parentId || null,
+          order: nextOrder(childCollections(parentId)),
+          createdAt: new Date().toISOString(),
+        };
+        state.collections.push(collection);
+        const childDl = dt.querySelector(':scope > dl');
+        if (childDl) walk(childDl, collection.id);
+      } else if (a) {
+        const href = a.getAttribute('href');
+        const url = href && normalizeUrl(href);
+        if (!url) continue;
+        state.bookmarks.push({
+          id: uid(),
+          url,
+          title: (a.textContent || hostnameOf(url)).slice(0, 300),
+          description: '',
+          image: null,
+          siteName: '',
+          favicon: `https://www.google.com/s2/favicons?domain=${hostnameOf(url)}&sz=64`,
+          collectionId: parentId || null,
+          order: nextOrder(bookmarksIn(parentId)),
+          createdAt: new Date().toISOString(),
+        });
+        added++;
+      }
+    }
+  };
+  walk(root, null);
+  return added;
+}
+
 // ---------- boot ----------
 
 async function importLegacyData() {
@@ -772,10 +993,12 @@ async function importLegacyData() {
 }
 
 async function boot() {
+  loadPrefs();
   initChrome();
   initBookmarkModal();
   initCollectionModal();
   initStaticDropTargets();
+  initViewbar();
 
   const stored = loadStore();
   if (stored) {

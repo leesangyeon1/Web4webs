@@ -30,6 +30,17 @@
     </button>
   </header>
 
+  <div class="viewbar">
+    <div id="view-modes" class="view-modes" role="group" aria-label="View mode"></div>
+    <div class="viewbar-right">
+      <label class="live-toggle" title="Render the live page inside each card">
+        <input id="live-toggle" type="checkbox"> Live previews
+      </label>
+      <button id="import-btn" class="btn ghost" type="button">Import Chrome bookmarks</button>
+      <input id="import-file" type="file" accept=".html,text/html" hidden>
+    </div>
+  </div>
+
   <div class="layout">
     <aside class="sidebar">
       <nav>
@@ -86,6 +97,10 @@
       <label class="field">
         <span>Name</span>
         <input id="col-name" type="text" placeholder="e.g. Design inspiration" required maxlength="100" autocomplete="off">
+      </label>
+      <label class="field">
+        <span>Parent collection</span>
+        <select id="col-parent"></select>
       </label>
       <div class="field">
         <span>Color</span>
