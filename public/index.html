@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web4webs — your websites, organized</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗂️</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+        <rect x="2" y="3" width="9" height="7" rx="2" fill="var(--accent)"/>
+        <rect x="13" y="3" width="9" height="7" rx="2" fill="#f9ab00"/>
+        <rect x="2" y="12" width="9" height="7" rx="2" fill="#188038"/>
+        <rect x="13" y="12" width="9" height="7" rx="2" fill="#d93025"/>
+      </svg>
+      <span>Web4webs</span>
+    </div>
+    <div class="search-wrap">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14"/></svg>
+      <input id="search-input" type="search" placeholder="Search bookmarks…" autocomplete="off">
+    </div>
+    <button id="new-collection-btn" class="btn ghost" type="button">
+      <span class="plus">+</span> Collection
+    </button>
+    <button id="add-bookmark-btn" class="btn primary" type="button">
+      <span class="plus">+</span> Add bookmark
+    </button>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <nav>
+        <button class="nav-item active" data-view="all" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M4 4h6v6H4zm10 0h6v6h-6zM4 14h6v6H4zm10 0h6v6h-6z"/></svg>
+          <span class="nav-label">All bookmarks</span>
+          <span class="nav-count" id="count-all">0</span>
+        </button>
+      </nav>
+      <div class="sidebar-heading">Collections</div>
+      <nav id="sidebar-collections"></nav>
+      <nav>
+        <button class="nav-item" data-view="unsorted" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2m0 12h-4a3 3 0 0 1-6 0H5V5h14z"/></svg>
+          <span class="nav-label">Unsorted</span>
+          <span class="nav-count" id="count-unsorted">0</span>
+        </button>
+      </nav>
+    </aside>
+
+    <main id="main" class="main"></main>
+  </div>
+
+  <dialog id="bookmark-modal" class="modal">
+    <form id="bookmark-form" method="dialog">
+      <h2 id="bookmark-modal-title">Add bookmark</h2>
+      <label class="field">
+        <span>URL</span>
+        <input id="bm-url" type="text" placeholder="https://example.com" required autocomplete="off" spellcheck="false">
+      </label>
+      <div id="bm-preview" class="link-preview hidden" aria-live="polite"></div>
+      <label class="field">
+        <span>Title</span>
+        <input id="bm-title" type="text" placeholder="Fetched automatically" autocomplete="off">
+      </label>
+      <label class="field">
+        <span>Description</span>
+        <textarea id="bm-description" rows="2" placeholder="Fetched automatically"></textarea>
+      </label>
+      <label class="field">
+        <span>Collection</span>
+        <select id="bm-collection"></select>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" data-close>Cancel</button>
+        <button type="submit" class="btn primary" id="bm-save">Save bookmark</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="collection-modal" class="modal">
+    <form id="collection-form" method="dialog">
+      <h2 id="collection-modal-title">New collection</h2>
+      <label class="field">
+        <span>Name</span>
+        <input id="col-name" type="text" placeholder="e.g. Design inspiration" required maxlength="100" autocomplete="off">
+      </label>
+      <div class="field">
+        <span>Color</span>
+        <div id="col-colors" class="color-swatches" role="radiogroup" aria-label="Collection color"></div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" data-close>Cancel</button>
+        <button type="submit" class="btn primary" id="col-save">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-modal" class="modal modal-sm">
+    <h2 id="confirm-title">Are you sure?</h2>
+    <p id="confirm-message"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="button" class="btn danger" id="confirm-ok">Delete</button>
+    </div>
+  </dialog>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

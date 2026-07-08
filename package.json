@@ -1,0 +1,15 @@
+{
+  "name": "web4webs",
+  "version": "1.0.0",
+  "description": "Save websites as cards, organize them into colored collections, with rich link previews.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
