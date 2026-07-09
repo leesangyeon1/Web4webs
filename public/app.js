@@ -129,7 +129,7 @@ function saveStore() {
     }
   }
   // Mirror to the cloud when signed in (unless we're currently applying a pull).
-  if (supa.user && !applyingRemote) schedulePush();
+  if (supa.creds && !applyingRemote) schedulePush();
 }
 
 function loadPrefs() {
@@ -1214,30 +1214,45 @@ function importFromJson(text) {
   return w.count;
 }
 
-// ---------- supabase auth + sync ----------
-// The whole {collections, bookmarks} document is stored as one row per user in a
-// `boards` table (jsonb). Last-write-wins across devices — fine for a personal
-// bookmark app. Prefs (view mode, sidebar, live) stay device-local.
+// ---------- id + passphrase sync ----------
+// Lightweight account: pick an ID + passphrase, and the whole
+// {collections, bookmarks} document is saved under that ID via two SECURITY
+// DEFINER Postgres functions (board_load / board_save) that verify a bcrypt
+// hash of the passphrase. No email/OAuth. Last-write-wins across devices.
+// ponytail: a known-ID + passphrase is weaker than real auth (no guess rate
+// limiting) — fine for a personal bookmark board; upgrade to Supabase Auth if
+// this ever holds sensitive data.
 
-const supa = { client: null, user: null };
+const CREDS_KEY = 'web4webs:cloud';
+const supa = { client: null, creds: null }; // creds = { id, secret }
 let applyingRemote = false;
 let pushTimer = null;
 
+function loadCreds() {
+  try { return JSON.parse(localStorage.getItem(CREDS_KEY) || 'null'); } catch { return null; }
+}
+function saveCreds(c) {
+  supa.creds = c;
+  try { localStorage.setItem(CREDS_KEY, JSON.stringify(c)); } catch { /* ignore */ }
+}
+function clearCreds() {
+  supa.creds = null;
+  try { localStorage.removeItem(CREDS_KEY); } catch { /* ignore */ }
+}
+
 function setSyncStatus(text) {
   const btn = $('#auth-btn');
-  if (btn && btn.dataset.email) btn.title = text;
+  if (btn && supa.creds) btn.title = text;
 }
 
 function updateAuthUI() {
   const btn = $('#auth-btn');
   if (!btn) return;
-  if (supa.user) {
-    btn.textContent = supa.user.email || 'Account';
-    btn.dataset.email = supa.user.email || '1';
-    btn.title = 'Signed in — synced. Click to sign out.';
+  if (supa.creds) {
+    btn.textContent = `@${supa.creds.id}`;
+    btn.title = 'Synced. Click to sign out.';
   } else {
     btn.textContent = 'Sign in';
-    delete btn.dataset.email;
     btn.title = 'Sign in to sync across devices';
   }
 }
@@ -1248,68 +1263,79 @@ function schedulePush() {
 }
 
 async function pushData() {
-  if (!supa.client || !supa.user) return;
-  const { error } = await supa.client.from('boards').upsert({
-    user_id: supa.user.id,
-    data: { collections: state.collections, bookmarks: state.bookmarks },
-    updated_at: new Date().toISOString(),
+  if (!supa.client || !supa.creds) return;
+  const { error } = await supa.client.rpc('board_save', {
+    p_id: supa.creds.id,
+    p_secret: supa.creds.secret,
+    p_data: { collections: state.collections, bookmarks: state.bookmarks },
   });
   setSyncStatus(error ? 'Sync error' : 'Synced');
 }
 
+// Load the cloud board into state. Returns 'ok' | 'empty' | 'wrong' | 'error'.
 async function pullData() {
-  if (!supa.client || !supa.user) return;
-  const { data, error } = await supa.client
-    .from('boards').select('data').eq('user_id', supa.user.id).maybeSingle();
-  if (error) { setSyncStatus('Sync error'); return; }
-  if (data && data.data && (data.data.collections || data.data.bookmarks)) {
+  if (!supa.client || !supa.creds) return 'error';
+  const { data, error } = await supa.client.rpc('board_load', {
+    p_id: supa.creds.id,
+    p_secret: supa.creds.secret,
+  });
+  if (error) return 'wrong'; // board exists but passphrase mismatched
+  if (data && (data.collections || data.bookmarks)) {
     applyingRemote = true;
-    state.collections = Array.isArray(data.data.collections) ? data.data.collections : [];
-    state.bookmarks = Array.isArray(data.data.bookmarks) ? data.data.bookmarks : [];
+    state.collections = Array.isArray(data.collections) ? data.collections : [];
+    state.bookmarks = Array.isArray(data.bookmarks) ? data.bookmarks : [];
     saveStore();
     render();
     applyingRemote = false;
     setSyncStatus('Synced');
-    toast('Synced from your account');
-  } else {
-    // No cloud copy yet — seed it with whatever is on this device.
-    pushData();
-    toast('Sync enabled for this account');
+    return 'ok';
   }
+  return 'empty'; // no board yet under this ID
 }
 
 function initAuthModal() {
   const modal = $('#auth-modal');
-  $('#auth-btn').addEventListener('click', async () => {
-    if (supa.user) {
-      if (confirm(`Sign out ${supa.user.email || ''}? Local bookmarks stay on this device.`)) {
-        await supa.client.auth.signOut();
+  $('#auth-btn').addEventListener('click', () => {
+    if (supa.creds) {
+      if (confirm(`Sign out @${supa.creds.id}? Bookmarks stay on this device.`)) {
+        clearCreds();
+        updateAuthUI();
+        toast('Signed out');
       }
     } else {
       modal.showModal();
-      $('#auth-email').focus();
+      $('#auth-id').focus();
     }
   });
-  $('#auth-google').addEventListener('click', async () => {
-    const { error } = await supa.client.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: location.origin + location.pathname },
-    });
-    if (error) toast(`Google sign-in failed: ${error.message}`, true);
-    // On success the browser redirects to Google, then back here.
-  });
+
   $('#auth-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const email = $('#auth-email').value.trim();
-    if (!email) return;
+    const id = $('#auth-id').value.trim().toLowerCase();
+    const secret = $('#auth-secret').value;
+    if (id.length < 3 || secret.length < 4) {
+      toast('ID needs 3+ chars, passphrase 4+.', true);
+      return;
+    }
     $('#auth-send').disabled = true;
-    const { error } = await supa.client.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: location.origin + location.pathname },
-    });
+    supa.creds = { id, secret };
+    const result = await pullData();
     $('#auth-send').disabled = false;
+
+    if (result === 'wrong') {
+      supa.creds = null;
+      toast('Wrong passphrase for that ID.', true);
+      return;
+    }
+    saveCreds({ id, secret });
+    updateAuthUI();
     modal.close();
-    toast(error ? `Sign-in failed: ${error.message}` : 'Check your email for the sign-in link.', Boolean(error));
+    if (result === 'ok') {
+      toast(`Signed in as @${id} — synced`);
+    } else {
+      // New ID (empty/error-free): create the board from this device's data.
+      await pushData();
+      toast(`Created @${id} — bookmarks will sync`);
+    }
   });
 }
 
@@ -1318,20 +1344,18 @@ async function initSync() {
   try { cfg = await (await fetch('/api/config')).json(); } catch { /* offline / no endpoint */ }
   if (!cfg.url || !cfg.anonKey || !window.supabase) return; // sync not configured
 
-  supa.client = window.supabase.createClient(cfg.url, cfg.anonKey);
+  supa.client = window.supabase.createClient(cfg.url, cfg.anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
   $('#auth-btn').style.display = '';
   initAuthModal();
 
-  supa.client.auth.onAuthStateChange((event, session) => {
-    supa.user = session ? session.user : null;
-    updateAuthUI();
-    if (event === 'SIGNED_IN') pullData();
-  });
-
-  const { data } = await supa.client.auth.getSession();
-  supa.user = data.session ? data.session.user : null;
+  supa.creds = loadCreds();
   updateAuthUI();
-  if (supa.user) pullData();
+  if (supa.creds) {
+    const result = await pullData();
+    if (result === 'wrong') { clearCreds(); updateAuthUI(); }
+  }
 }
 
 // ---------- boot ----------
