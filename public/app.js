@@ -34,9 +34,11 @@ const state = {
   bookmarks: [],
   view: 'all', // 'all' | 'unsorted' | collection id
   query: '',
-  tagFilter: '', // active tag filter ('' = none)
+  tagFilters: [], // active tag filters (empty = none)
+  tagMode: 'or', // 'or' | 'and' when multiple tags selected
   viewMode: 'grid',
   live: false,
+  sidebar: true, // left sidebar visible
 };
 
 function parseTags(raw) {
@@ -133,13 +135,22 @@ function loadPrefs() {
     const p = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
     if (VIEW_MODES.some((m) => m.id === p.viewMode)) state.viewMode = p.viewMode;
     state.live = Boolean(p.live);
+    if (typeof p.sidebar === 'boolean') state.sidebar = p.sidebar;
   } catch { /* defaults */ }
 }
 
 function savePrefs() {
   try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ viewMode: state.viewMode, live: state.live }));
+    localStorage.setItem(PREFS_KEY, JSON.stringify({
+      viewMode: state.viewMode, live: state.live, sidebar: state.sidebar,
+    }));
   } catch { /* ignore */ }
+}
+
+function applySidebar() {
+  document.querySelector('.layout').classList.toggle('sidebar-hidden', !state.sidebar);
+  const btn = $('#sidebar-toggle');
+  if (btn) btn.classList.toggle('active', !state.sidebar);
 }
 
 function uid() {
@@ -256,7 +267,11 @@ function nextOrder(items) {
 
 function matchesQuery(bookmark) {
   // Active tag filter must match first.
-  if (state.tagFilter && !(bookmark.tags || []).includes(state.tagFilter)) return false;
+  if (state.tagFilters.length) {
+    const has = (t) => (bookmark.tags || []).includes(t);
+    const ok = state.tagMode === 'and' ? state.tagFilters.every(has) : state.tagFilters.some(has);
+    if (!ok) return false;
+  }
   if (!state.query) return true;
   const tags = (bookmark.tags || []).join(' ');
   const haystack = `${bookmark.title} ${bookmark.description} ${bookmark.url} ${bookmark.siteName || ''} ${tags}`.toLowerCase();
@@ -332,11 +347,29 @@ function renderTagsSidebar() {
   const tags = allTags();
   heading.style.display = tags.length ? '' : 'none';
   wrap.replaceChildren();
+
+  // Controls appear once 1+ tags are active: AND/OR mode (only meaningful with
+  // 2+) and a clear button.
+  if (state.tagFilters.length) {
+    const controls = el('div', { class: 'tag-controls' });
+    if (state.tagFilters.length > 1) {
+      controls.append(el('button', {
+        class: 'tag-mode', type: 'button',
+        title: 'Toggle match mode',
+        onclick: () => { state.tagMode = state.tagMode === 'and' ? 'or' : 'and'; render(); },
+      }, `Match: ${state.tagMode.toUpperCase()}`));
+    }
+    controls.append(el('button', {
+      class: 'tag-clear', type: 'button', onclick: clearTags,
+    }, `Clear (${state.tagFilters.length})`));
+    wrap.append(controls);
+  }
+
   for (const [tag, count] of tags) {
     wrap.append(el('button', {
-      class: `tag-chip${state.tagFilter === tag ? ' active' : ''}`,
+      class: `tag-chip${state.tagFilters.includes(tag) ? ' active' : ''}`,
       type: 'button',
-      onclick: () => setTagFilter(state.tagFilter === tag ? '' : tag),
+      onclick: () => toggleTag(tag),
     },
       el('span', { class: 'tag-chip-name' }, `#${tag}`),
       el('span', { class: 'tag-chip-count' }, String(count)),
@@ -344,8 +377,15 @@ function renderTagsSidebar() {
   }
 }
 
-function setTagFilter(tag) {
-  state.tagFilter = tag;
+function toggleTag(tag) {
+  const i = state.tagFilters.indexOf(tag);
+  if (i === -1) state.tagFilters.push(tag);
+  else state.tagFilters.splice(i, 1);
+  render();
+}
+
+function clearTags() {
+  state.tagFilters = [];
   render();
 }
 
@@ -381,7 +421,7 @@ function renderMain() {
     for (const { c, depth } of ordered) {
       if (!showAll && !subtree.has(c.id)) continue;
       // A collapsed collection hides its descendants entirely.
-      if (ancestorCollapsed(c.id) && !(state.query || state.tagFilter)) continue;
+      if (ancestorCollapsed(c.id) && !(state.query || state.tagFilters.length)) continue;
       const items = bookmarksIn(c.id).filter(matchesQuery);
       if (state.query && !items.length) continue;
       main.append(sectionEl(c, items, depth));
@@ -395,8 +435,10 @@ function renderMain() {
     }
   }
 
-  if ((state.query || state.tagFilter) && !main.children.length) {
-    const label = state.tagFilter ? `#${state.tagFilter}` : `“${state.query}”`;
+  if ((state.query || state.tagFilters.length) && !main.children.length) {
+    const label = state.tagFilters.length
+      ? state.tagFilters.map((t) => `#${t}`).join(state.tagMode === 'and' ? ' AND ' : ' / ')
+      : `“${state.query}”`;
     main.append(el('div', { class: 'empty-state' }, `No bookmarks match ${label}.`));
   }
 }
@@ -524,10 +566,10 @@ function tagsRow(bookmark) {
   const row = el('div', { class: 'card-tags', onclick: (e) => e.stopPropagation() });
   for (const t of tags) {
     row.append(el('button', {
-      class: `card-tag${state.tagFilter === t ? ' active' : ''}`,
+      class: `card-tag${state.tagFilters.includes(t) ? ' active' : ''}`,
       type: 'button',
       title: `Filter by #${t}`,
-      onclick: () => setTagFilter(state.tagFilter === t ? '' : t),
+      onclick: () => toggleTag(t),
     }, `#${t}`));
   }
   return row;
@@ -963,6 +1005,12 @@ function initChrome() {
     item.addEventListener('click', () => setView(item.dataset.view));
   });
 
+  $('#sidebar-toggle').addEventListener('click', () => {
+    state.sidebar = !state.sidebar;
+    savePrefs();
+    applySidebar();
+  });
+
   let searchTimer = null;
   $('#search-input').addEventListener('input', (e) => {
     clearTimeout(searchTimer);
@@ -1025,30 +1073,81 @@ function initViewbar() {
     if (!file) return;
     try {
       const text = await file.text();
-      const added = importChromeBookmarks(text);
+      const added = importBookmarksFile(text);
       saveStore();
       render();
-      toast(added ? `Imported ${added} bookmark${added === 1 ? '' : 's'}` : 'No bookmarks found in file', !added);
+      toast(
+        added
+          ? `Imported ${added} bookmark${added === 1 ? '' : 's'}`
+          : 'No bookmarks found. Use a Chrome export (.html) or the raw "Bookmarks" file.',
+        !added,
+      );
     } catch {
       toast('Could not read that file.', true);
     }
   });
 }
 
-// ---------- chrome bookmark import ----------
-// Chrome exports the Netscape bookmark format: nested <DL> lists where <H3> is a
-// folder and <A> is a link. We map folders to (nested) collections and links to
-// bookmarks, reusing folder colors round-robin so the tree stays readable.
+// ---------- browser bookmark import ----------
+// A web page can't read the browser's bookmarks directly (only an extension
+// can). So we import from a file the user provides, in either of the two shapes
+// real browsers produce:
+//   1. Netscape HTML export (chrome://bookmarks -> Export)
+//   2. Chrome's raw profile "Bookmarks" JSON file (roots -> folders/urls)
+// Both map folders to nested collections and links to bookmarks.
 
-function importChromeBookmarks(html) {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  const root = doc.querySelector('dl');
-  if (!root) return 0;
-
+// Shared writer so both parsers build state identically. Colors cycle so the
+// imported tree stays readable.
+function importWriter() {
   const colorNames = Object.keys(COLORS).filter((c) => c !== 'grey');
   let colorIdx = 0;
   let added = 0;
+  return {
+    folder(name, parentId) {
+      const collection = {
+        id: uid(),
+        name: (name || 'Folder').slice(0, 100),
+        color: colorNames[colorIdx++ % colorNames.length],
+        collapsed: false,
+        parentId: parentId || null,
+        order: nextOrder(childCollections(parentId)),
+        createdAt: new Date().toISOString(),
+      };
+      state.collections.push(collection);
+      return collection.id;
+    },
+    link(rawUrl, title, parentId) {
+      const url = rawUrl && normalizeUrl(rawUrl);
+      if (!url) return;
+      state.bookmarks.push({
+        id: uid(),
+        url,
+        title: (title || hostnameOf(url)).slice(0, 300),
+        description: '',
+        image: null,
+        siteName: '',
+        favicon: `https://www.google.com/s2/favicons?domain=${hostnameOf(url)}&sz=64`,
+        tags: [],
+        collectionId: parentId || null,
+        order: nextOrder(bookmarksIn(parentId)),
+        createdAt: new Date().toISOString(),
+      });
+      added++;
+    },
+    get count() { return added; },
+  };
+}
 
+// Route to the right parser by sniffing the content.
+function importBookmarksFile(text) {
+  return text.trimStart().startsWith('{') ? importFromJson(text) : importFromHtml(text);
+}
+
+function importFromHtml(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const root = doc.querySelector('dl');
+  if (!root) return 0;
+  const w = importWriter();
   // Walk a <DL>: its <DT> children each hold either an <H3> (folder + nested
   // <DL>) or an <A> (link). parentId threads the current collection down.
   const walk = (dl, parentId) => {
@@ -1057,40 +1156,41 @@ function importChromeBookmarks(html) {
       const h3 = dt.querySelector(':scope > h3');
       const a = dt.querySelector(':scope > a');
       if (h3) {
-        const collection = {
-          id: uid(),
-          name: (h3.textContent || 'Folder').slice(0, 100),
-          color: colorNames[colorIdx++ % colorNames.length],
-          collapsed: false,
-          parentId: parentId || null,
-          order: nextOrder(childCollections(parentId)),
-          createdAt: new Date().toISOString(),
-        };
-        state.collections.push(collection);
+        const id = w.folder(h3.textContent, parentId);
         const childDl = dt.querySelector(':scope > dl');
-        if (childDl) walk(childDl, collection.id);
+        if (childDl) walk(childDl, id);
       } else if (a) {
-        const href = a.getAttribute('href');
-        const url = href && normalizeUrl(href);
-        if (!url) continue;
-        state.bookmarks.push({
-          id: uid(),
-          url,
-          title: (a.textContent || hostnameOf(url)).slice(0, 300),
-          description: '',
-          image: null,
-          siteName: '',
-          favicon: `https://www.google.com/s2/favicons?domain=${hostnameOf(url)}&sz=64`,
-          collectionId: parentId || null,
-          order: nextOrder(bookmarksIn(parentId)),
-          createdAt: new Date().toISOString(),
-        });
-        added++;
+        w.link(a.getAttribute('href'), a.textContent, parentId);
       }
     }
   };
   walk(root, null);
-  return added;
+  return w.count;
+}
+
+function importFromJson(text) {
+  let data;
+  try { data = JSON.parse(text); } catch { return 0; }
+  if (!data || !data.roots) return 0;
+  const w = importWriter();
+  // A url node -> bookmark; a folder node -> collection whose children recurse.
+  const walk = (node, parentId) => {
+    if (!node) return;
+    if (node.type === 'url' || node.url) {
+      w.link(node.url, node.name, parentId);
+    } else if (Array.isArray(node.children)) {
+      const id = w.folder(node.name, parentId);
+      for (const child of node.children) walk(child, id);
+    }
+  };
+  // Each root (bookmark_bar / other / synced) is itself a folder; put its loose
+  // links at top level and turn its sub-folders into collections.
+  for (const key of Object.keys(data.roots)) {
+    const root = data.roots[key];
+    if (!root || !Array.isArray(root.children)) continue;
+    for (const child of root.children) walk(child, null);
+  }
+  return w.count;
 }
 
 // ---------- boot ----------
@@ -1114,6 +1214,7 @@ async function boot() {
   initCollectionModal();
   initStaticDropTargets();
   initViewbar();
+  applySidebar();
 
   const stored = loadStore();
   if (stored) {
