@@ -131,6 +131,19 @@
     </div>
   </dialog>
 
+  <dialog id="import-modal" class="modal">
+    <h2>Import bookmarks</h2>
+    <p class="import-steps">A website can't read your browser's bookmarks directly — pick a file exported from the browser:</p>
+    <ol class="import-steps">
+      <li><b>Chrome export:</b> open <code>chrome://bookmarks</code> → ⋮ (top-right) → <b>Export bookmarks</b> → save the <code>.html</code>.</li>
+      <li><b>Or the raw file:</b> choose Chrome's <code>Bookmarks</code> file (no extension) from your profile folder.</li>
+    </ol>
+    <div class="modal-actions">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="button" class="btn primary" id="import-choose">Choose file…</button>
+    </div>
+  </dialog>
+
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
   <script src="app.js"></script>

@@ -315,20 +315,35 @@ function renderSidebar() {
   nav.replaceChildren();
   const renderTree = (parentId, depth) => {
     for (const collection of childCollections(parentId)) {
+      const hasChildren = childCollections(collection.id).length > 0;
+      // Collapse chevron (only when there are sub-collections). Toggles the same
+      // `collapsed` flag the main sections use, so the tree and content stay in sync.
+      const twisty = el('span', {
+        class: `nav-twisty${hasChildren ? '' : ' leaf'}${collection.collapsed ? ' collapsed' : ''}`,
+        onclick: hasChildren ? (e) => {
+          e.stopPropagation();
+          collection.collapsed = !collection.collapsed;
+          saveStore();
+          render();
+        } : null,
+      }, hasChildren ? svgIcon(ICONS.chevron, 14) : null);
+
       const item = el('button', {
         class: `nav-item${state.view === collection.id ? ' active' : ''}`,
         type: 'button',
         dataset: { collectionId: collection.id },
-        style: { paddingLeft: `${12 + depth * 16}px` },
+        style: { paddingLeft: `${8 + depth * 16}px` },
         onclick: () => setView(collection.id),
       },
+        twisty,
         el('span', { class: 'nav-dot', style: { background: colorHex(collection.color) } }),
         el('span', { class: 'nav-label' }, collection.name),
         el('span', { class: 'nav-count' }, String(bookmarksIn(collection.id).length)),
       );
       attachSidebarDrop(item, collection.id);
       nav.append(item);
-      renderTree(collection.id, depth + 1);
+      // Hide the subtree in the sidebar when collapsed.
+      if (!collection.collapsed) renderTree(collection.id, depth + 1);
     }
   };
   renderTree(null, 0);
@@ -1066,7 +1081,11 @@ function initViewbar() {
     renderMain();
   });
 
-  $('#import-btn').addEventListener('click', () => $('#import-file').click());
+  $('#import-btn').addEventListener('click', () => $('#import-modal').showModal());
+  $('#import-choose').addEventListener('click', () => {
+    $('#import-modal').close();
+    $('#import-file').click();
+  });
   $('#import-file').addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';

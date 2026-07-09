@@ -725,3 +725,31 @@ button { font: inherit; color: inherit; }
 }
 .tag-mode { font-weight: 700; color: var(--accent); }
 .tag-clear:hover, .tag-mode:hover { background: var(--surface-2); }
+
+/* ---------- sidebar collection twisty ---------- */
+.nav-twisty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-right: -2px;
+  border-radius: 4px;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.nav-twisty:hover { background: var(--surface-2); color: var(--text); }
+.nav-twisty svg { transition: transform 0.15s; }
+.nav-twisty.collapsed svg { transform: rotate(-90deg); }
+.nav-twisty.leaf { cursor: default; }
+
+/* ---------- import modal ---------- */
+.import-steps { color: var(--text-2); font-size: 13.5px; }
+.import-steps li { margin: 6px 0; }
+.import-steps code {
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12.5px;
+}
