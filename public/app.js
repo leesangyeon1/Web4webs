@@ -1272,14 +1272,21 @@ async function pushData() {
   setSyncStatus(error ? 'Sync error' : 'Synced');
 }
 
-// Load the cloud board into state. Returns 'ok' | 'empty' | 'wrong' | 'error'.
+let lastSyncError = '';
+
+// Load the cloud board into state. Returns 'ok' | 'empty' | 'wrong' | 'nodb' | 'error'.
 async function pullData() {
   if (!supa.client || !supa.creds) return 'error';
   const { data, error } = await supa.client.rpc('board_load', {
     p_id: supa.creds.id,
     p_secret: supa.creds.secret,
   });
-  if (error) return 'wrong'; // board exists but passphrase mismatched
+  if (error) {
+    lastSyncError = error.message || '';
+    if (error.code === 'PGRST202') return 'nodb'; // functions not installed yet
+    if (/passphrase/i.test(lastSyncError)) return 'wrong';
+    return 'error';
+  }
   if (data && (data.collections || data.bookmarks)) {
     applyingRemote = true;
     state.collections = Array.isArray(data.collections) ? data.collections : [];
@@ -1324,6 +1331,16 @@ function initAuthModal() {
     if (result === 'wrong') {
       supa.creds = null;
       toast('Wrong passphrase for that ID.', true);
+      return;
+    }
+    if (result === 'nodb') {
+      supa.creds = null;
+      toast('Sync database not set up yet (run the SQL in Supabase).', true);
+      return;
+    }
+    if (result === 'error') {
+      supa.creds = null;
+      toast(`Sync error: ${lastSyncError || 'unknown'}`, true);
       return;
     }
     saveCreds({ id, secret });
