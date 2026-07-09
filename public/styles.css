@@ -669,3 +669,35 @@ button { font: inherit; color: inherit; }
   .view-triple .card-grid { grid-template-columns: repeat(2, 1fr); }
   .view-long .card-thumb { width: 140px; }
 }
+
+/* ---------- tags ---------- */
+.card-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+.card-tag {
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.card-tag:hover { color: var(--text); border-color: var(--text-3); }
+.card-tag.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.tag-list { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 10px 10px; }
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.tag-chip:hover { color: var(--text); }
+.tag-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.tag-chip-count { font-size: 10px; opacity: 0.65; }

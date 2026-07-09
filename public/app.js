@@ -34,9 +34,27 @@ const state = {
   bookmarks: [],
   view: 'all', // 'all' | 'unsorted' | collection id
   query: '',
+  tagFilter: '', // active tag filter ('' = none)
   viewMode: 'grid',
   live: false,
 };
+
+function parseTags(raw) {
+  return [...new Set(
+    String(raw || '')
+      .split(',')
+      .map((t) => t.trim().toLowerCase().slice(0, 40))
+      .filter(Boolean)
+  )].slice(0, 20);
+}
+
+function allTags() {
+  const counts = new Map();
+  for (const b of state.bookmarks) {
+    for (const t of b.tags || []) counts.set(t, (counts.get(t) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -220,13 +238,28 @@ function collectionById(id) {
   return state.collections.find((c) => c.id === id) || null;
 }
 
+// True if any ANCESTOR of this collection is collapsed, so a collapsed parent
+// hides its whole subtree (not just its own grid).
+function ancestorCollapsed(id) {
+  let c = collectionById(id);
+  while (c && c.parentId) {
+    const parent = collectionById(c.parentId);
+    if (parent && parent.collapsed) return true;
+    c = parent;
+  }
+  return false;
+}
+
 function nextOrder(items) {
   return items.reduce((max, item) => Math.max(max, item.order || 0), 0) + 1;
 }
 
 function matchesQuery(bookmark) {
+  // Active tag filter must match first.
+  if (state.tagFilter && !(bookmark.tags || []).includes(state.tagFilter)) return false;
   if (!state.query) return true;
-  const haystack = `${bookmark.title} ${bookmark.description} ${bookmark.url} ${bookmark.siteName || ''}`.toLowerCase();
+  const tags = (bookmark.tags || []).join(' ');
+  const haystack = `${bookmark.title} ${bookmark.description} ${bookmark.url} ${bookmark.siteName || ''} ${tags}`.toLowerCase();
   return state.query.split(/\s+/).every((term) => haystack.includes(term));
 }
 
@@ -288,6 +321,32 @@ function renderSidebar() {
   document.querySelectorAll('.nav-item[data-view]').forEach((item) => {
     item.classList.toggle('active', item.dataset.view === state.view);
   });
+
+  renderTagsSidebar();
+}
+
+function renderTagsSidebar() {
+  const wrap = $('#sidebar-tags');
+  const heading = $('#tags-heading');
+  if (!wrap) return;
+  const tags = allTags();
+  heading.style.display = tags.length ? '' : 'none';
+  wrap.replaceChildren();
+  for (const [tag, count] of tags) {
+    wrap.append(el('button', {
+      class: `tag-chip${state.tagFilter === tag ? ' active' : ''}`,
+      type: 'button',
+      onclick: () => setTagFilter(state.tagFilter === tag ? '' : tag),
+    },
+      el('span', { class: 'tag-chip-name' }, `#${tag}`),
+      el('span', { class: 'tag-chip-count' }, String(count)),
+    ));
+  }
+}
+
+function setTagFilter(tag) {
+  state.tagFilter = tag;
+  render();
 }
 
 function renderMain() {
@@ -321,6 +380,8 @@ function renderMain() {
   if (showAll || state.view !== 'unsorted') {
     for (const { c, depth } of ordered) {
       if (!showAll && !subtree.has(c.id)) continue;
+      // A collapsed collection hides its descendants entirely.
+      if (ancestorCollapsed(c.id) && !(state.query || state.tagFilter)) continue;
       const items = bookmarksIn(c.id).filter(matchesQuery);
       if (state.query && !items.length) continue;
       main.append(sectionEl(c, items, depth));
@@ -334,8 +395,9 @@ function renderMain() {
     }
   }
 
-  if (state.query && !main.children.length) {
-    main.append(el('div', { class: 'empty-state' }, `No bookmarks match “${state.query}”.`));
+  if ((state.query || state.tagFilter) && !main.children.length) {
+    const label = state.tagFilter ? `#${state.tagFilter}` : `“${state.query}”`;
+    main.append(el('div', { class: 'empty-state' }, `No bookmarks match ${label}.`));
   }
 }
 
@@ -379,11 +441,14 @@ function sectionEl(collection, items, depth = 0) {
   const collapseBtn = el('button', {
     class: 'icon-btn collapse-btn', type: 'button', title: 'Collapse',
     onclick: () => {
-      section.classList.toggle('collapsed');
-      if (!isUnsorted) {
-        collection.collapsed = section.classList.contains('collapsed');
-        saveStore();
+      if (isUnsorted) {
+        section.classList.toggle('collapsed');
+        return;
       }
+      // Full re-render so the whole subtree hides/shows with the parent.
+      collection.collapsed = !collection.collapsed;
+      saveStore();
+      render();
     },
   }, svgIcon(ICONS.chevron));
 
@@ -453,6 +518,21 @@ function thumbEl(bookmark) {
   return thumb;
 }
 
+function tagsRow(bookmark) {
+  const tags = bookmark.tags || [];
+  if (!tags.length) return null;
+  const row = el('div', { class: 'card-tags', onclick: (e) => e.stopPropagation() });
+  for (const t of tags) {
+    row.append(el('button', {
+      class: `card-tag${state.tagFilter === t ? ' active' : ''}`,
+      type: 'button',
+      title: `Filter by #${t}`,
+      onclick: () => setTagFilter(state.tagFilter === t ? '' : t),
+    }, `#${t}`));
+  }
+  return row;
+}
+
 function cardEl(bookmark, accentColor) {
   const site = el('div', { class: 'card-site' });
   if (bookmark.favicon) {
@@ -472,6 +552,7 @@ function cardEl(bookmark, accentColor) {
       site,
       el('h3', { class: 'card-title' }, bookmark.title),
       bookmark.description ? el('p', { class: 'card-desc' }, bookmark.description) : null,
+      tagsRow(bookmark),
     ),
     el('div', { class: 'card-actions', onclick: (e) => e.stopPropagation() },
       el('button', { class: 'icon-btn', type: 'button', title: 'Open in new tab', onclick: () => window.open(bookmark.url, '_blank', 'noopener') }, svgIcon(ICONS.open, 14)),
@@ -696,6 +777,7 @@ function openBookmarkModal(bookmark = null) {
   $('#bm-url').disabled = Boolean(bookmark);
   $('#bm-title').value = bookmark ? bookmark.title : '';
   $('#bm-description').value = bookmark ? bookmark.description : '';
+  $('#bm-tags').value = bookmark && bookmark.tags ? bookmark.tags.join(', ') : '';
   $('#bm-preview').classList.add('hidden');
   const defaultCollection = bookmark
     ? bookmark.collectionId
@@ -722,6 +804,7 @@ function initBookmarkModal() {
     const title = $('#bm-title').value.trim();
     const description = $('#bm-description').value.trim();
     const collectionId = $('#bm-collection').value || null;
+    const tags = parseTags($('#bm-tags').value);
 
     if (editingBookmarkId) {
       const bookmark = state.bookmarks.find((b) => b.id === editingBookmarkId);
@@ -729,6 +812,7 @@ function initBookmarkModal() {
         if (title) bookmark.title = title.slice(0, 300);
         bookmark.description = description.slice(0, 500);
         bookmark.collectionId = collectionId;
+        bookmark.tags = tags;
         saveStore();
         toast('Bookmark updated');
       }
@@ -748,6 +832,7 @@ function initBookmarkModal() {
         siteName: preview ? preview.siteName : '',
         favicon: preview ? preview.favicon : null,
         frameable: preview ? preview.frameable : undefined,
+        tags,
         collectionId,
         order: nextOrder(bookmarksIn(collectionId)),
         createdAt: new Date().toISOString(),

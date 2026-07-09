@@ -59,6 +59,8 @@
           <span class="nav-count" id="count-unsorted">0</span>
         </button>
       </nav>
+      <div class="sidebar-heading" id="tags-heading" style="display:none">Tags</div>
+      <nav id="sidebar-tags" class="tag-list"></nav>
     </aside>
 
     <main id="main" class="main"></main>
@@ -79,6 +81,10 @@
       <label class="field">
         <span>Description</span>
         <textarea id="bm-description" rows="2" placeholder="Fetched automatically"></textarea>
+      </label>
+      <label class="field">
+        <span>Tags</span>
+        <input id="bm-tags" type="text" placeholder="design, inspiration, tools" autocomplete="off">
       </label>
       <label class="field">
         <span>Collection</span>
