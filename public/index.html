@@ -31,6 +31,7 @@
     <button id="add-bookmark-btn" class="btn primary" type="button">
       <span class="plus">+</span> Add bookmark
     </button>
+    <button id="auth-btn" class="btn ghost" type="button" style="display:none">Sign in</button>
   </header>
 
   <div class="viewbar">
@@ -144,8 +145,24 @@
     </div>
   </dialog>
 
+  <dialog id="auth-modal" class="modal modal-sm">
+    <form id="auth-form" method="dialog">
+      <h2>Sign in to sync</h2>
+      <p class="import-steps">Sync your bookmarks across devices. Enter your email and we'll send a magic sign-in link — no password.</p>
+      <label class="field">
+        <span>Email</span>
+        <input id="auth-email" type="email" placeholder="you@example.com" required autocomplete="email">
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" data-close>Cancel</button>
+        <button type="submit" class="btn primary" id="auth-send">Send magic link</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
 </body>
 </html>

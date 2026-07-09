@@ -35,6 +35,16 @@ app.get('/api/data', (req, res) => {
   }
 });
 
+// Public Supabase config for the browser client. The anon key is designed to be
+// exposed client-side; Row Level Security is what protects the data. Empty when
+// sync isn't configured, in which case the frontend stays localStorage-only.
+app.get('/api/config', (req, res) => {
+  res.json({
+    url: process.env.SUPABASE_URL || '',
+    anonKey: process.env.SUPABASE_ANON_KEY || '',
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Web4webs running at http://localhost:${PORT}`);
 });

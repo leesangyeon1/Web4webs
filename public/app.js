@@ -128,6 +128,8 @@ function saveStore() {
       toast('Could not save — browser storage is unavailable or full.', true);
     }
   }
+  // Mirror to the cloud when signed in (unless we're currently applying a pull).
+  if (supa.user && !applyingRemote) schedulePush();
 }
 
 function loadPrefs() {
@@ -1212,6 +1214,118 @@ function importFromJson(text) {
   return w.count;
 }
 
+// ---------- supabase auth + sync ----------
+// The whole {collections, bookmarks} document is stored as one row per user in a
+// `boards` table (jsonb). Last-write-wins across devices — fine for a personal
+// bookmark app. Prefs (view mode, sidebar, live) stay device-local.
+
+const supa = { client: null, user: null };
+let applyingRemote = false;
+let pushTimer = null;
+
+function setSyncStatus(text) {
+  const btn = $('#auth-btn');
+  if (btn && btn.dataset.email) btn.title = text;
+}
+
+function updateAuthUI() {
+  const btn = $('#auth-btn');
+  if (!btn) return;
+  if (supa.user) {
+    btn.textContent = supa.user.email || 'Account';
+    btn.dataset.email = supa.user.email || '1';
+    btn.title = 'Signed in — synced. Click to sign out.';
+  } else {
+    btn.textContent = 'Sign in';
+    delete btn.dataset.email;
+    btn.title = 'Sign in to sync across devices';
+  }
+}
+
+function schedulePush() {
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushData, 800);
+}
+
+async function pushData() {
+  if (!supa.client || !supa.user) return;
+  const { error } = await supa.client.from('boards').upsert({
+    user_id: supa.user.id,
+    data: { collections: state.collections, bookmarks: state.bookmarks },
+    updated_at: new Date().toISOString(),
+  });
+  setSyncStatus(error ? 'Sync error' : 'Synced');
+}
+
+async function pullData() {
+  if (!supa.client || !supa.user) return;
+  const { data, error } = await supa.client
+    .from('boards').select('data').eq('user_id', supa.user.id).maybeSingle();
+  if (error) { setSyncStatus('Sync error'); return; }
+  if (data && data.data && (data.data.collections || data.data.bookmarks)) {
+    applyingRemote = true;
+    state.collections = Array.isArray(data.data.collections) ? data.data.collections : [];
+    state.bookmarks = Array.isArray(data.data.bookmarks) ? data.data.bookmarks : [];
+    saveStore();
+    render();
+    applyingRemote = false;
+    setSyncStatus('Synced');
+    toast('Synced from your account');
+  } else {
+    // No cloud copy yet — seed it with whatever is on this device.
+    pushData();
+    toast('Sync enabled for this account');
+  }
+}
+
+function initAuthModal() {
+  const modal = $('#auth-modal');
+  $('#auth-btn').addEventListener('click', async () => {
+    if (supa.user) {
+      if (confirm(`Sign out ${supa.user.email || ''}? Local bookmarks stay on this device.`)) {
+        await supa.client.auth.signOut();
+      }
+    } else {
+      modal.showModal();
+      $('#auth-email').focus();
+    }
+  });
+  $('#auth-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = $('#auth-email').value.trim();
+    if (!email) return;
+    $('#auth-send').disabled = true;
+    const { error } = await supa.client.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: location.origin + location.pathname },
+    });
+    $('#auth-send').disabled = false;
+    modal.close();
+    toast(error ? `Sign-in failed: ${error.message}` : 'Check your email for the sign-in link.', Boolean(error));
+  });
+}
+
+async function initSync() {
+  let cfg = {};
+  try { cfg = await (await fetch('/api/config')).json(); } catch { /* offline / no endpoint */ }
+  if (!cfg.url || !cfg.anonKey || !window.supabase) return; // sync not configured
+
+  supa.client = window.supabase.createClient(cfg.url, cfg.anonKey);
+  $('#auth-btn').style.display = '';
+  initAuthModal();
+
+  supa.client.auth.onAuthStateChange((event, session) => {
+    supa.user = session ? session.user : null;
+    updateAuthUI();
+    if (event === 'SIGNED_IN') pullData();
+  });
+
+  const { data } = await supa.client.auth.getSession();
+  supa.user = data.session ? data.session.user : null;
+  updateAuthUI();
+  if (supa.user) pullData();
+}
+
 // ---------- boot ----------
 
 async function importLegacyData() {
@@ -1248,6 +1362,7 @@ async function boot() {
     saveStore();
   }
   render();
+  initSync(); // non-blocking; enables cloud sync if configured + signed in
 }
 
 boot();
