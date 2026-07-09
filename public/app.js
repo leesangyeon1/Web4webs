@@ -154,6 +154,21 @@ async function fetchPreviewApi(url) {
   return res.json();
 }
 
+// Ask the server whether a bookmark's site allows framing, cache it on the
+// bookmark, and re-render if it turned out live-frameable. Runs at most once per
+// bookmark per session (older bookmarks saved before frameable existed).
+const frameableChecked = new Set();
+async function checkFrameable(bookmark) {
+  if (frameableChecked.has(bookmark.id)) return;
+  frameableChecked.add(bookmark.id);
+  try {
+    const preview = await fetchPreviewApi(bookmark.url);
+    bookmark.frameable = Boolean(preview.frameable);
+    saveStore();
+    if (bookmark.frameable && state.live) render();
+  } catch { /* leave as screenshot */ }
+}
+
 // ---------- helpers ----------
 
 function hostnameOf(url) {
@@ -404,22 +419,36 @@ function thumbEl(bookmark) {
   } else {
     fallback();
   }
-  // Live layer: a real screenshot of the page, rendered server-side by a free
-  // thumbnail service. Unlike an <iframe>, this works even for sites that block
-  // framing (X-Frame-Options / CSP frame-ancestors), i.e. most big sites.
-  // ponytail: mShots is free/no-key; first hit returns a "generating" placeholder
-  // then caches the real shot. Swap the service URL if you need faster/keyed shots.
+  // Live layer. Hybrid:
+  //  - frameable site  -> real <iframe> of the live page (updates every render)
+  //  - blocked site    -> server screenshot (mShots), since the browser refuses
+  //                       to frame it (X-Frame-Options / CSP frame-ancestors)
+  //  - unknown (older bookmarks) -> screenshot now, then ask the server whether
+  //                       it's frameable and upgrade to a live frame if so.
   if (state.live) {
     thumb.classList.add('live');
-    const shot = el('img', {
-      class: 'live-shot',
-      src: `https://s.wordpress.com/mshots/v1/${encodeURIComponent(bookmark.url)}?w=1200&h=630`,
-      alt: '',
-      loading: 'lazy',
-      onerror: (e) => e.target.remove(), // fall back to OG image / gradient beneath
-    });
-    thumb.append(shot);
-    thumb.append(el('span', { class: 'live-badge' }, 'LIVE'));
+    if (bookmark.frameable === true) {
+      thumb.append(el('iframe', {
+        class: 'live-frame',
+        src: bookmark.url,
+        loading: 'lazy',
+        referrerpolicy: 'no-referrer',
+        sandbox: 'allow-scripts allow-same-origin allow-popups',
+        tabindex: '-1',
+        'aria-hidden': 'true',
+      }));
+      thumb.append(el('span', { class: 'live-badge' }, 'LIVE'));
+    } else {
+      thumb.append(el('img', {
+        class: 'live-shot',
+        src: `https://s.wordpress.com/mshots/v1/${encodeURIComponent(bookmark.url)}?w=1200&h=630`,
+        alt: '',
+        loading: 'lazy',
+        onerror: (e) => e.target.remove(),
+      }));
+      thumb.append(el('span', { class: 'live-badge shot' }, 'SHOT'));
+      if (bookmark.frameable === undefined) checkFrameable(bookmark);
+    }
   }
   return thumb;
 }
@@ -718,6 +747,7 @@ function initBookmarkModal() {
         image: preview ? preview.image : null,
         siteName: preview ? preview.siteName : '',
         favicon: preview ? preview.favicon : null,
+        frameable: preview ? preview.frameable : undefined,
         collectionId,
         order: nextOrder(bookmarksIn(collectionId)),
         createdAt: new Date().toISOString(),

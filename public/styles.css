@@ -605,6 +605,21 @@ button { font: inherit; color: inherit; }
   background: #fff;
   z-index: 1;
 }
+.card-thumb.live .live-frame {
+  position: absolute;
+  inset: 0;
+  width: 200%;
+  height: 200%;
+  transform: scale(0.5);
+  transform-origin: top left;
+  border: 0;
+  background: #fff;
+  z-index: 1;
+  pointer-events: none;   /* preview only; clicks open the card link */
+}
+/* In big single-column views, let the live frame be scrolled/used. */
+.view-fullscreen .card-thumb.live .live-frame,
+.view-long .card-thumb.live .live-frame { pointer-events: auto; }
 .live-badge {
   position: absolute;
   top: 6px; left: 6px;
@@ -617,6 +632,7 @@ button { font: inherit; color: inherit; }
   padding: 2px 5px;
   border-radius: 4px;
 }
+.live-badge.shot { background: rgba(90, 90, 90, 0.72); }
 
 /* ---------- view modes ---------- */
 .view-triple .card-grid { grid-template-columns: repeat(3, 1fr); }
