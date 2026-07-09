@@ -21,7 +21,7 @@ create or replace function public.board_save(p_id text, p_secret text, p_data js
 returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare existing text;
 begin
@@ -45,7 +45,7 @@ create or replace function public.board_load(p_id text, p_secret text)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare r simple_boards;
 begin
