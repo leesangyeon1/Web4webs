@@ -1290,6 +1290,14 @@ function initAuthModal() {
       $('#auth-email').focus();
     }
   });
+  $('#auth-google').addEventListener('click', async () => {
+    const { error } = await supa.client.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: location.origin + location.pathname },
+    });
+    if (error) toast(`Google sign-in failed: ${error.message}`, true);
+    // On success the browser redirects to Google, then back here.
+  });
   $('#auth-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const email = $('#auth-email').value.trim();
